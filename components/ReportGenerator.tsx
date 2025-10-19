@@ -1,12 +1,13 @@
-
 import React, { useState, useEffect } from 'react';
-import { Project, ProjectStat, ReportType } from '../types';
-import { calculateStats, formatTime } from '../utils/time.ts';
+import { Project, ProjectStat, ReportType, Session } from '../types';
+import { calculateStatsFromSessions, formatTime } from '../utils/time.ts';
 import { DocumentReportIcon, DownloadIcon, RefreshIcon, ExcelIcon } from './icons';
 
 interface ReportGeneratorProps {
     projects: Project[];
+    sessions: Session[];
     showAlert: (message: string, type?: 'success' | 'warning' | 'error') => void;
+    isConnected: boolean;
 }
 
 // Helper to format YYYY-MM-DD to DD/MM/YYYY
@@ -35,7 +36,7 @@ const parseDateFromDisplay = (displayDate: string): string | null => {
     return null;
 };
 
-const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }) => {
+const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, sessions, showAlert, isConnected }) => {
     const [reportType, setReportType] = useState<ReportType>('day');
     const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
     const [displayDateValue, setDisplayDateValue] = useState(formatDateForDisplay(reportDate));
@@ -71,6 +72,10 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
     };
 
     const handleGenerateReport = () => {
+        if (!isConnected) {
+            showAlert('Please sign in with Google to generate reports.', 'warning');
+            return;
+        }
         if (isDateInvalid) {
             showAlert('Please enter a valid date in DD/MM/YYYY format.', 'warning');
             return;
@@ -79,17 +84,28 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
             showAlert('Please select a date for the report.', 'warning');
             return;
         }
-        const stats = calculateStats(projects, reportDate, reportType);
+        const stats = calculateStatsFromSessions(sessions, projects, reportDate, reportType);
         setReportData(stats);
         setTotalHours(stats.reduce((sum, s) => sum + s.hours, 0));
     };
 
-    const handleExport = () => {
+    const handleExport = (format: 'csv' | 'excel') => {
         if (reportData.length === 0) {
             showAlert('No data to export. Generate a report first.', 'warning');
             return;
         }
+        
+        const formattedDate = formatDateForDisplay(reportDate).replace(/\//g, '-');
+        const filename = `time_tracker_report_${reportType}_${formattedDate}`;
 
+        if (format === 'csv') {
+            exportToCsv(filename);
+        } else {
+            exportToExcel(filename);
+        }
+    };
+
+    const exportToCsv = (filename: string) => {
         let csvContent = 'data:text/csv;charset=utf-8,Project,Time (Hours),Formatted Time,Percentage (%)\n';
         reportData.forEach(stat => {
             const percentage = totalHours > 0 ? (stat.hours / totalHours) * 100 : 0;
@@ -98,62 +114,28 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
         csvContent += `Total,${totalHours.toFixed(4)},"${formatTime(totalHours)}",100.00`;
 
         const encodedUri = encodeURI(csvContent);
-        const formattedDate = formatDateForDisplay(reportDate).replace(/\//g, '-');
         const link = document.createElement('a');
         link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `time_tracker_report_${reportType}_${formattedDate}.csv`);
+        link.setAttribute('download', `${filename}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        showAlert('Report exported successfully!');
-    };
-    
-    const handleExportExcel = () => {
-        if (reportData.length === 0) {
-            showAlert('No data to export. Generate a report first.', 'warning');
-            return;
-        }
+        showAlert('CSV report exported successfully!');
+    }
 
-        const escapeXml = (unsafe: string) => {
-            return unsafe.replace(/[<>&'"]/g, (c) => {
-                switch (c) {
-                    case '<': return '&lt;';
-                    case '>': return '&gt;';
-                    case '&': return '&amp;';
-                    case '\'': return '&apos;';
-                    case '"': return '&quot;';
-                    default: return '';
-                }
-            });
-        };
+    const exportToExcel = (filename: string) => {
+        const escapeXml = (unsafe: string) => unsafe.replace(/[<>&'"]/g, c => `&#${c.charCodeAt(0)};`);
         
         const xml = `<?xml version="1.0"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
   <Worksheet ss:Name="Time Report">
     <Table>
-      <Row>
-        <Cell><Data ss:Type="String">Project</Data></Cell>
-        <Cell><Data ss:Type="String">Time (Hours)</Data></Cell>
-        <Cell><Data ss:Type="String">Formatted Time</Data></Cell>
-        <Cell><Data ss:Type="String">Percentage (%)</Data></Cell>
-      </Row>
+      <Row ss:StyleID="s1"><Cell><Data ss:Type="String">Project</Data></Cell><Cell><Data ss:Type="String">Time (Hours)</Data></Cell><Cell><Data ss:Type="String">Formatted Time</Data></Cell><Cell><Data ss:Type="String">Percentage (%)</Data></Cell></Row>
       ${reportData.map(stat => {
           const percentage = totalHours > 0 ? (stat.hours / totalHours) * 100 : 0;
-          return `
-      <Row>
-        <Cell><Data ss:Type="String">${escapeXml(stat.projectName)}</Data></Cell>
-        <Cell><Data ss:Type="Number">${stat.hours.toFixed(4)}</Data></Cell>
-        <Cell><Data ss:Type="String">${formatTime(stat.hours)}</Data></Cell>
-        <Cell><Data ss:Type="Number">${percentage.toFixed(2)}</Data></Cell>
-      </Row>
-      `}).join('')}
-      <Row>
-        <Cell><Data ss:Type="String">Total</Data></Cell>
-        <Cell><Data ss:Type="Number">${totalHours.toFixed(4)}</Data></Cell>
-        <Cell><Data ss:Type="String">${formatTime(totalHours)}</Data></Cell>
-        <Cell><Data ss:Type="Number">100</Data></Cell>
-      </Row>
+          return `<Row><Cell><Data ss:Type="String">${escapeXml(stat.projectName)}</Data></Cell><Cell><Data ss:Type="Number">${stat.hours.toFixed(4)}</Data></Cell><Cell><Data ss:Type="String">${formatTime(stat.hours)}</Data></Cell><Cell><Data ss:Type="Number">${percentage.toFixed(2)}</Data></Cell></Row>`;
+      }).join('')}
+      <Row ss:StyleID="s1"><Cell><Data ss:Type="String">Total</Data></Cell><Cell><Data ss:Type="Number">${totalHours.toFixed(4)}</Data></Cell><Cell><Data ss:Type="String">${formatTime(totalHours)}</Data></Cell><Cell><Data ss:Type="Number">100</Data></Cell></Row>
     </Table>
   </Worksheet>
 </Workbook>`;
@@ -161,18 +143,15 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
         const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
         const url = URL.createObjectURL(blob);
         
-        const formattedDate = formatDateForDisplay(reportDate).replace(/\//g, '-');
         const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `time_tracker_report_${reportType}_${formattedDate}.xls`);
+        link.href = url;
+        link.download = `${filename}.xls`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         showAlert('Excel report exported successfully!');
     };
-
-    const displayDate = formatDateForDisplay(reportDate) || 'N/A';
     
     return (
         <div className="bg-white/60 backdrop-blur-md p-6 rounded-xl shadow-lg">
@@ -203,10 +182,10 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
                 <button onClick={handleGenerateReport} className="flex items-center justify-center bg-indigo-500 text-white py-2 px-4 rounded-lg shadow-md hover:bg-indigo-600 transition-colors">
                    <RefreshIcon className="w-5 h-5 mr-2"/> View
                 </button>
-                <button onClick={handleExport} className="flex items-center justify-center bg-green-500 text-white py-2 px-4 rounded-lg shadow-md hover:bg-green-600 transition-colors">
+                <button onClick={() => handleExport('csv')} className="flex items-center justify-center bg-green-500 text-white py-2 px-4 rounded-lg shadow-md hover:bg-green-600 transition-colors">
                     <DownloadIcon className="w-5 h-5 mr-2"/> CSV
                 </button>
-                <button onClick={handleExportExcel} className="flex items-center justify-center bg-teal-600 text-white py-2 px-4 rounded-lg shadow-md hover:bg-teal-700 transition-colors">
+                <button onClick={() => handleExport('excel')} className="flex items-center justify-center bg-teal-600 text-white py-2 px-4 rounded-lg shadow-md hover:bg-teal-700 transition-colors">
                     <ExcelIcon className="w-5 h-5 mr-2"/> Excel
                 </button>
             </div>
@@ -214,7 +193,7 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
             {reportData.length > 0 && (
                 <div className="text-center my-2">
                     <p className="text-sm text-gray-600">
-                        Showing report for {reportType} of: <span className="font-semibold text-indigo-600">{displayDate}</span>
+                        Showing report for {reportType} of: <span className="font-semibold text-indigo-600">{formatDateForDisplay(reportDate)}</span>
                     </p>
                 </div>
             )}
@@ -249,7 +228,9 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ projects, showAlert }
                             </>
                         ) : (
                            <tr>
-                                <td colSpan={3} className="text-center py-6 text-gray-500">Select options and generate a report.</td>
+                                <td colSpan={3} className="text-center py-6 text-gray-500">
+                                  {isConnected ? "Generate a report to see data." : "Please sign in to Google to view reports."}
+                                </td>
                            </tr>
                         )}
                     </tbody>
