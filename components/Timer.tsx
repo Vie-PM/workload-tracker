@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Project, TimerState } from '../types';
 import { PlayIcon, PauseIcon, StopIcon } from './icons';
@@ -12,6 +11,7 @@ interface TimerProps {
     onPause: () => void;
     onStop: () => void;
     timerDisplay: string;
+    isConnected: boolean;
 }
 
 const Timer: React.FC<TimerProps> = ({
@@ -22,11 +22,12 @@ const Timer: React.FC<TimerProps> = ({
     onStart,
     onPause,
     onStop,
-    timerDisplay
+    timerDisplay,
+    isConnected
 }) => {
     const visibleProjects = projects.filter(p => !p.isHidden);
-    const canStart = !!timerState.currentProjectId;
-    const canStop = !!timerState.currentSessionStart;
+    const canStart = !!timerState.currentProjectId && isConnected;
+    const canStop = !!timerState.currentSessionStart && isConnected;
 
     return (
         <div className="bg-white/60 backdrop-blur-md p-6 rounded-xl shadow-lg">
@@ -39,7 +40,8 @@ const Timer: React.FC<TimerProps> = ({
                         id="projectSelect"
                         value={timerState.currentProjectId || ''}
                         onChange={(e) => onProjectChange(e.target.value || null)}
-                        className="w-full bg-white border border-gray-300 rounded-lg shadow-sm py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        disabled={timerState.isRunning}
+                        className="w-full bg-white border border-gray-300 rounded-lg shadow-sm py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
                     >
                         <option value="">-- Choose a project --</option>
                         {visibleProjects.map(project => (
@@ -73,6 +75,7 @@ const Timer: React.FC<TimerProps> = ({
                     <button
                         onClick={onStart}
                         disabled={!canStart}
+                        title={!isConnected ? "Please connect to Google Sheets first" : !timerState.currentProjectId ? "Please select a project" : "Start timer"}
                         className="flex items-center justify-center w-32 h-12 bg-green-500 text-white rounded-lg shadow-md hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105"
                     >
                         <PlayIcon className="w-6 h-6 mr-2" />
@@ -90,12 +93,14 @@ const Timer: React.FC<TimerProps> = ({
                 <button
                     onClick={onStop}
                     disabled={!canStop}
+                    title={!isConnected ? "Please connect to Google Sheets first" : !canStop ? "Timer not running" : "Stop timer"}
                     className="flex items-center justify-center w-32 h-12 bg-red-500 text-white rounded-lg shadow-md hover:bg-red-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105"
                 >
                     <StopIcon className="w-6 h-6 mr-2" />
                     <span>Stop</span>
                 </button>
             </div>
+             {!isConnected && <p className="text-center text-red-600 text-sm mt-4">Please connect to Google Sheets in the settings to start tracking time.</p>}
         </div>
     );
 };
